@@ -11,6 +11,8 @@ Websocket support for esphttpd. Inspired by https://github.com/dangrie158/ESP-82
  * ----------------------------------------------------------------------------
  */
 
+// #define DEBUG
+#include "debug.h"
 
 #include <esp8266.h>
 #include "httpd.h"
@@ -143,7 +145,7 @@ int ICACHE_FLASH_ATTR cgiWebSocketRecv(HttpdConnData *connData, char *data, int 
 	int i, j, sl;
 	Websock *ws=(Websock*)connData->cgiPrivData;
 	for (i=0; i<len; i++) {
-//		os_printf("Ws: State %d byte 0x%02X\n", ws->priv->wsStatus, data[i]);
+//		dbg_printf("Ws: State %d byte 0x%02X\n", ws->priv->wsStatus, data[i]);
 		if (ws->priv->wsStatus==ST_FLAGS) {
 			ws->priv->maskCtr=0;
 			ws->priv->frameCont=0;
@@ -212,7 +214,7 @@ int ICACHE_FLASH_ATTR cgiWebsocket(HttpdConnData *connData) {
 	sha1nfo s;
 	if (connData->conn==NULL) {
 		//Connection aborted. Clean up.
-//		os_printf("WS: Cleanup\n");
+//		dbg_printf("WS: Cleanup\n");
 		if (connData->cgiPrivData) {
 			Websock *ws=(Websock*)connData->cgiPrivData;
 			if (ws->closeCb) ws->closeCb(ws);
@@ -233,14 +235,14 @@ int ICACHE_FLASH_ATTR cgiWebsocket(HttpdConnData *connData) {
 	}
 	
 	if (connData->cgiPrivData==NULL) {
-//		os_printf("WS: First call\n");
+//		dbg_printf("WS: First call\n");
 		//First call here. Check if client headers are OK, send server header.
 		i=httpdGetHeader(connData, "Upgrade", buff, sizeof(buff)-1);
-//		os_printf("WS: Upgrade: %s\n", buff);
+//		dbg_printf("WS: Upgrade: %s\n", buff);
 		if (i && os_strcmp(buff, "websocket")==0) {
 			i=httpdGetHeader(connData, "Sec-WebSocket-Key", buff, sizeof(buff)-1);
 			if (i) {
-//				os_printf("WS: Key: %s\n", buff);
+//				dbg_printf("WS: Key: %s\n", buff);
 				//Seems like a WebSocket connection.
 				// Alloc structs
 				connData->cgiPrivData=os_malloc(sizeof(Websock));

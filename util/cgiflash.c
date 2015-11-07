@@ -11,6 +11,8 @@ Some flash handling cgi routines. Used for reading the existing flash and updati
  * ----------------------------------------------------------------------------
  */
 
+// #define DEBUG
+#include "debug.h"
 
 #include <esp8266.h>
 #include "cgiflash.h"
@@ -56,7 +58,7 @@ int ICACHE_FLASH_ATTR cgiGetFirmwareNext(HttpdConnData *connData) {
 	httpdEndHeaders(connData);
 	char *next = id == 1 ? "user1.bin" : "user2.bin";
 	httpdSend(connData, next, -1);
-	os_printf("Next firmware: %s (got %d)\n", next, id);
+	dbg_printf("Next firmware: %s (got %d)\n", next, id);
 	return HTTPD_CGI_DONE;
 }
 
@@ -71,7 +73,7 @@ int ICACHE_FLASH_ATTR cgiReadFlash(HttpdConnData *connData) {
 	}
 
 	if (*pos==0) {
-		os_printf("Start flash download.\n");
+		dbg_printf("Start flash download.\n");
 		httpdStartResponse(connData, 200);
 		httpdHeader(connData, "Content-Type", "application/bin");
 		httpdEndHeaders(connData);
@@ -110,7 +112,7 @@ int ICACHE_FLASH_ATTR cgiUploadFirmware(HttpdConnData *connData) {
 	if (def==NULL) err="Flash def = NULL ?";
 
 	// check overall size
-	os_printf("Max img sz 0x%X, post len 0x%X\n", def->fwSize, connData->post->len);
+	dbg_printf("Max img sz 0x%X, post len 0x%X\n", def->fwSize, connData->post->len);
 	if (err==NULL && connData->post->len > def->fwSize) err = "Firmware image too large";
 
 	// check that data starts with an appropriate header
@@ -125,7 +127,7 @@ int ICACHE_FLASH_ATTR cgiUploadFirmware(HttpdConnData *connData) {
 
 	// return an error if there is one
 	if (err != NULL) {
-		os_printf("Error %d: %s\n", code, err);
+		dbg_printf("Error %d: %s\n", code, err);
 		httpdStartResponse(connData, code);
 		httpdHeader(connData, "Content-Type", "text/plain");
 		httpdEndHeaders(connData);
@@ -143,12 +145,12 @@ int ICACHE_FLASH_ATTR cgiUploadFirmware(HttpdConnData *connData) {
 	// erase next flash block if necessary
 	if (address % SPI_FLASH_SEC_SIZE == 0){
 		// We need to erase this block
-		os_printf("Erasing flash at 0x%05x (id=%d)\n", (unsigned int)address, 2-id);
+		dbg_printf("Erasing flash at 0x%05x (id=%d)\n", (unsigned int)address, 2-id);
 		spi_flash_erase_sector(address/SPI_FLASH_SEC_SIZE);
 	}
 
 	// Write the data
-	os_printf("Writing %d bytes at 0x%05x (%d of %d)\n", connData->post->buffSize, (unsigned int)address,
+	dbg_printf("Writing %d bytes at 0x%05x (%d of %d)\n", connData->post->buffSize, (unsigned int)address,
 			connData->post->received, connData->post->len);
 	spi_flash_write(address, (uint32 *)connData->post->buff, connData->post->buffLen);
 
