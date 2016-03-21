@@ -24,6 +24,8 @@ Cgi/template routines for the /wifi url.
 //WiFi access point data
 typedef struct {
 	char ssid[32];
+	char bssid[8];
+	int channel;
 	char rssi;
 	char enc;
 } ApData;
@@ -44,7 +46,7 @@ static ScanResultData cgiWifiAps;
 #define CONNTRY_FAIL 3
 //Connection result var
 static int connTryStatus=CONNTRY_IDLE;
-static ETSTimer resetTimer;
+static os_timer_t resetTimer;
 
 //Callback the code calls when a wlan ap scan is done. Basically stores the result in
 //the cgiWifiAps struct.
@@ -59,8 +61,8 @@ void ICACHE_FLASH_ATTR wifiScanDoneCb(void *arg, STATUS status) {
 
 	//Clear prev ap data if needed.
 	if (cgiWifiAps.apData!=NULL) {
-		for (n=0; n<cgiWifiAps.noAps; n++) os_free(cgiWifiAps.apData[n]);
-		os_free(cgiWifiAps.apData);
+		for (n=0; n<cgiWifiAps.noAps; n++) free(cgiWifiAps.apData[n]);
+		free(cgiWifiAps.apData);
 	}
 
 	//Count amount of access points found.
@@ -70,7 +72,7 @@ void ICACHE_FLASH_ATTR wifiScanDoneCb(void *arg, STATUS status) {
 		n++;
 	}
 	//Allocate memory for access point data
-	cgiWifiAps.apData=(ApData **)os_malloc(sizeof(ApData *)*n);
+	cgiWifiAps.apData=(ApData **)malloc(sizeof(ApData *)*n);
 	cgiWifiAps.noAps=n;
 	dbg_printf("Scan done: found %d APs\n", n);
 
@@ -85,10 +87,12 @@ void ICACHE_FLASH_ATTR wifiScanDoneCb(void *arg, STATUS status) {
 			break;
 		}
 		//Save the ap data.
-		cgiWifiAps.apData[n]=(ApData *)os_malloc(sizeof(ApData));
+		cgiWifiAps.apData[n]=(ApData *)malloc(sizeof(ApData));
 		cgiWifiAps.apData[n]->rssi=bss_link->rssi;
+		cgiWifiAps.apData[n]->channel=bss_link->channel;
 		cgiWifiAps.apData[n]->enc=bss_link->authmode;
 		strncpy(cgiWifiAps.apData[n]->ssid, (char*)bss_link->ssid, 32);
+		strncpy(cgiWifiAps.apData[n]->bssid, (char*)bss_link->bssid, 6);
 
 		bss_link = bss_link->next.stqe_next;
 		n++;
@@ -117,14 +121,14 @@ int ICACHE_FLASH_ATTR cgiWiFiScan(HttpdConnData *connData) {
 	if (!cgiWifiAps.scanInProgress && pos!=0) {
 		//Fill in json code for an access point
 		if (pos-1<cgiWifiAps.noAps) {
-			len=os_sprintf(buff, "{\"essid\": \"%s\", \"rssi\": \"%d\", \"enc\": \"%d\"}%s\n", 
-					cgiWifiAps.apData[pos-1]->ssid, cgiWifiAps.apData[pos-1]->rssi, 
-					cgiWifiAps.apData[pos-1]->enc, (pos-1==cgiWifiAps.noAps-1)?"":",");
+			len=sprintf(buff, "{\"essid\": \"%s\", \"bssid\": \"" MACSTR "\", \"rssi\": \"%d\", \"enc\": \"%d\", \"channel\": \"%d\"}%s\n",
+					cgiWifiAps.apData[pos-1]->ssid, MAC2STR(cgiWifiAps.apData[pos-1]->bssid), cgiWifiAps.apData[pos-1]->rssi,
+					cgiWifiAps.apData[pos-1]->enc, cgiWifiAps.apData[pos-1]->channel, (pos-1==cgiWifiAps.noAps-1)?"":",");
 			httpdSend(connData, buff, len);
 		}
 		pos++;
 		if ((pos-1)>=cgiWifiAps.noAps) {
-			len=os_sprintf(buff, "]\n}\n}\n");
+			len=sprintf(buff, "]\n}\n}\n");
 			httpdSend(connData, buff, len);
 			//Also start a new scan.
 			wifiStartScan();
@@ -141,12 +145,12 @@ int ICACHE_FLASH_ATTR cgiWiFiScan(HttpdConnData *connData) {
 
 	if (cgiWifiAps.scanInProgress==1) {
 		//We're still scanning. Tell Javascript code that.
-		len=os_sprintf(buff, "{\n \"result\": { \n\"inProgress\": \"1\"\n }\n}\n");
+		len=sprintf(buff, "{\n \"result\": { \n\"inProgress\": \"1\"\n }\n}\n");
 		httpdSend(connData, buff, len);
 		return HTTPD_CGI_DONE;
 	} else {
 		//We have a scan result. Pass it on.
-		len=os_sprintf(buff, "{\n \"result\": { \n\"inProgress\": \"0\", \n\"APs\": [\n");
+		len=sprintf(buff, "{\n \"result\": { \n\"inProgress\": \"0\", \n\"APs\": [\n");
 		httpdSend(connData, buff, len);
 		if (cgiWifiAps.apData==NULL) cgiWifiAps.noAps=0;
 		connData->cgiData=(void *)1;
@@ -200,7 +204,7 @@ static void ICACHE_FLASH_ATTR reassTimerCb(void *arg) {
 int ICACHE_FLASH_ATTR cgiWiFiConnect(HttpdConnData *connData) {
 	char essid[128];
 	char passwd[128];
-	static ETSTimer reassTimer;
+	static os_timer_t reassTimer;
 	
 	if (connData->conn==NULL) {
 		//Connection aborted. Clean up.
@@ -210,8 +214,8 @@ int ICACHE_FLASH_ATTR cgiWiFiConnect(HttpdConnData *connData) {
 	httpdFindArg(connData->post->buff, "essid", essid, sizeof(essid));
 	httpdFindArg(connData->post->buff, "passwd", passwd, sizeof(passwd));
 
-	os_strncpy((char*)stconf.ssid, essid, 32);
-	os_strncpy((char*)stconf.password, passwd, 64);
+	strncpy((char*)stconf.ssid, essid, 32);
+	strncpy((char*)stconf.password, passwd, 64);
 	dbg_printf("Try to connect to AP %s pw %s\n", essid, passwd);
 
 	//Schedule disconnect/connect
@@ -259,11 +263,11 @@ int ICACHE_FLASH_ATTR cgiWiFiConnStatus(HttpdConnData *connData) {
 	httpdHeader(connData, "Content-Type", "text/json");
 	httpdEndHeaders(connData);
 	if (connTryStatus==CONNTRY_IDLE) {
-		len=os_sprintf(buff, "{\n \"status\": \"idle\"\n }\n");
+		len=sprintf(buff, "{\n \"status\": \"idle\"\n }\n");
 	} else if (connTryStatus==CONNTRY_WORKING || connTryStatus==CONNTRY_SUCCESS) {
 		if (st==STATION_GOT_IP) {
 			wifi_get_ip_info(0, &info);
-			len=os_sprintf(buff, "{\n \"status\": \"success\",\n \"ip\": \"%d.%d.%d.%d\" }\n", 
+			len=sprintf(buff, "{\n \"status\": \"success\",\n \"ip\": \"%d.%d.%d.%d\" }\n", 
 				(info.ip.addr>>0)&0xff, (info.ip.addr>>8)&0xff, 
 				(info.ip.addr>>16)&0xff, (info.ip.addr>>24)&0xff);
 			//Reset into AP-only mode sooner.
@@ -271,10 +275,10 @@ int ICACHE_FLASH_ATTR cgiWiFiConnStatus(HttpdConnData *connData) {
 			os_timer_setfn(&resetTimer, resetTimerCb, NULL);
 			os_timer_arm(&resetTimer, 1000, 0);
 		} else {
-			len=os_sprintf(buff, "{\n \"status\": \"working\"\n }\n");
+			len=sprintf(buff, "{\n \"status\": \"working\"\n }\n");
 		}
 	} else {
-		len=os_sprintf(buff, "{\n \"status\": \"fail\"\n }\n");
+		len=sprintf(buff, "{\n \"status\": \"fail\"\n }\n");
 	}
 
 	httpdSend(connData, buff, len);
@@ -289,26 +293,25 @@ int ICACHE_FLASH_ATTR tplWlan(HttpdConnData *connData, char *token, void **arg) 
 	if (token==NULL) return HTTPD_CGI_DONE;
 	wifi_station_get_config(&stconf);
 
-	os_strcpy(buff, "Unknown");
-	if (os_strcmp(token, "WiFiMode")==0) {
+	strcpy(buff, "Unknown");
+	if (strcmp(token, "WiFiMode")==0) {
 		x=wifi_get_opmode();
-		if (x==1) os_strcpy(buff, "Client");
-		if (x==2) os_strcpy(buff, "SoftAP");
-		if (x==3) os_strcpy(buff, "STA+AP");
-	} else if (os_strcmp(token, "currSsid")==0) {
-		os_strcpy(buff, (char*)stconf.ssid);
-	} else if (os_strcmp(token, "WiFiPasswd")==0) {
-		os_strcpy(buff, (char*)stconf.password);
-	} else if (os_strcmp(token, "WiFiapwarn")==0) {
+		if (x==1) strcpy(buff, "Client");
+		if (x==2) strcpy(buff, "SoftAP");
+		if (x==3) strcpy(buff, "STA+AP");
+	} else if (strcmp(token, "currSsid")==0) {
+		strcpy(buff, (char*)stconf.ssid);
+	} else if (strcmp(token, "WiFiPasswd")==0) {
+		strcpy(buff, (char*)stconf.password);
+	} else if (strcmp(token, "WiFiapwarn")==0) {
 		x=wifi_get_opmode();
 		if (x==2) {
-			os_strcpy(buff, "<b>Can't scan in this mode.</b> Click <a href=\"setmode.cgi?mode=3\">here</a> to go to STA+AP mode.");
+			strcpy(buff, "<b>Can't scan in this mode.</b> Click <a href=\"setmode.cgi?mode=3\">here</a> to go to STA+AP mode.");
 		} else {
-			os_strcpy(buff, "Click <a href=\"setmode.cgi?mode=2\">here</a> to go to standalone AP mode.");
+			strcpy(buff, "Click <a href=\"setmode.cgi?mode=2\">here</a> to go to standalone AP mode.");
 		}
 	}
 	httpdSend(connData, buff, -1);
 	return HTTPD_CGI_DONE;
 }
-
 

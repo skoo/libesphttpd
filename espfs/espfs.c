@@ -29,14 +29,6 @@ It's written for use with httpd, but doesn't need to be used as such.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#define os_malloc malloc
-#define os_free free
-#define os_memcpy memcpy
-#define os_strncmp strncmp
-#define os_strcmp strcmp
-#define os_strcpy strcpy
-#define os_printf printf
-#define dbg_printf printf
 #define ICACHE_FLASH_ATTR
 #endif
 
@@ -76,9 +68,17 @@ Accessing the flash through the mem emulation at 0x40200000 is a bit hairy: All 
 a memory exception, crashing the program.
 */
 
+#ifndef ESP32
+#define FLASH_BASE_ADDR 0x40200000
+#else
+//ESP32 IRAM addresses start at 0x40000000, but the IRAM segment actually is mapped
+//starting from SPI address 0x40000.
+#define FLASH_BASE_ADDR 0x40040000
+#endif
+
 EspFsInitResult ICACHE_FLASH_ATTR espFsInit(void *flashAddress) {
-	if((uint32_t)flashAddress > 0x40200000) {
-		flashAddress = (void*)((uint32_t)flashAddress-0x40200000);
+	if((uint32_t)flashAddress > 0x40000000) {
+		flashAddress = (void*)((uint32_t)flashAddress-FLASH_BASE_ADDR);
 	}
 
 	// base address must be aligned to 4 bytes
@@ -100,7 +100,7 @@ EspFsInitResult ICACHE_FLASH_ATTR espFsInit(void *flashAddress) {
 //Copies len bytes over from dst to src, but does it using *only*
 //aligned 32-bit reads. Yes, it's no too optimized but it's short and sweet and it works.
 
-//ToDo: perhaps os_memcpy also does unaligned accesses?
+//ToDo: perhaps memcpy also does unaligned accesses?
 #ifdef __ets__
 void ICACHE_FLASH_ATTR readFlashUnaligned(char *dst, char *src, int len) {
 	uint8_t src_offset = ((uint32_t)src) & 3;
@@ -108,7 +108,7 @@ void ICACHE_FLASH_ATTR readFlashUnaligned(char *dst, char *src, int len) {
 
 	uint32_t tmp_buf[len/4 + 2];
 	spi_flash_read((uint32)src_address, (uint32*)tmp_buf, len+src_offset);
-	os_memcpy(dst, ((uint8_t*)tmp_buf)+src_offset, len);
+	memcpy(dst, ((uint8_t*)tmp_buf)+src_offset, len);
 }
 #else
 #define readFlashUnaligned memcpy
@@ -158,10 +158,10 @@ EspFsFile ICACHE_FLASH_ATTR *espFsOpen(char *fileName) {
 		spi_flash_read((uint32)p, (uint32*)&namebuf, sizeof(namebuf));
 //		dbg_printf("Found file '%s'. Namelen=%x fileLenComp=%x, compr=%d flags=%d\n", 
 //				namebuf, (unsigned int)h.nameLen, (unsigned int)h.fileLenComp, h.compression, h.flags);
-		if (os_strcmp(namebuf, fileName)==0) {
+		if (strcmp(namebuf, fileName)==0) {
 			//Yay, this is the file we need!
 			p+=h.nameLen; //Skip to content.
-			r=(EspFsFile *)os_malloc(sizeof(EspFsFile)); //Alloc file desc mem
+			r=(EspFsFile *)malloc(sizeof(EspFsFile)); //Alloc file desc mem
 //			dbg_printf("Alloc %p\n", r);
 			if (r==NULL) return NULL;
 			r->header=(EspFsHeader *)hpos;
@@ -271,7 +271,7 @@ void ICACHE_FLASH_ATTR espFsClose(EspFsFile *fh) {
 	}
 #endif
 //	dbg_printf("Freed %p\n", fh);
-	os_free(fh);
+	free(fh);
 }
 
 
