@@ -731,25 +731,6 @@ void ICACHE_FLASH_ATTR httpdDisconCb(ConnTypePtr rconn, char *remIp, int remPort
 	httpdRetireConn(hconn);
 }
 
-static void ICACHE_FLASH_ATTR httpdDisconCb(void *arg) {
-	//The esp sdk passes through wrong arg here, namely the one of the *listening* socket.
-	//That is why we can't use (HttpdConnData)arg->sock here.
-	//Just look at all the sockets and kill the slot if needed.
-	int i;
-	for (i=0; i<MAX_CONN; i++) {
-		if (connData[i].conn!=NULL) {
-			//Why the >=ESPCONN_CLOSE and not ==? Well, seems the stack sometimes de-allocates
-			//espconns under our noses, especially when connections are interrupted. The memory
-			//is then used for something else, and we can use that to capture *most* of the
-			//disconnect cases.
-			if (connData[i].conn->state==ESPCONN_NONE || connData[i].conn->state>=ESPCONN_CLOSE) {
-				connData[i].conn=NULL;
-				if (connData[i].cgi!=NULL) connData[i].cgi(&connData[i]); //flush cgi data
-				httpdRetireConn(&connData[i]);
-			}
-		}
-	}
-}
 
 int ICACHE_FLASH_ATTR httpdConnectCb(ConnTypePtr conn, char *remIp, int remPort) {
 	int i;
